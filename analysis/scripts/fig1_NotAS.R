@@ -9,7 +9,7 @@ print("2.1) Compute pseudotimes using Monocle-DDRTree method")
 load(paste0(datapath, "DGE.RData"))
 dge$genes$gene_short_name <- dge$genes$symbol
 
-# process and identify top 100 MVGs
+# identify top 500 most variable genes over time
 pd <- new("AnnotatedDataFrame", data = dge$samples)
 fd <- new("AnnotatedDataFrame", data = dge$genes)
 XX <- newCellDataSet(as(dge$counts, "sparseMatrix"),
@@ -19,8 +19,6 @@ XX <- newCellDataSet(as(dge$counts, "sparseMatrix"),
                      expressionFamily=negbinomial.size())
 XX <- estimateSizeFactors(XX)
 XX <- estimateDispersions(XX)
-
-# identify DE genes over time --> select top 500 DE genes
 pData(XX)$hour <- pData(XX)$day*24
 de <- differentialGeneTest(XX, fullModelFormulaStr="~hour", cores=detectCores())
 top_pdt_genes <- 500
@@ -29,11 +27,11 @@ de_genes <- de_genes[order(de_genes$qval, decreasing = FALSE),]
 order_genes <- rownames(de_genes[order(de_genes$qval, decreasing = FALSE),])[seq_len(top_pdt_genes)]
 XX <- setOrderingFilter(XX, order_genes)
 
-# reduce dimensions and compute pseudotime for XX cells
+# reduce dimensions and compute pseudotime
 XX <- reduceDimension(XX, method = 'DDRTree')
 XX <- orderCells(XX)
 
-# the origin is defined as the state with the maximum number of 0h cells
+# the origin is defined as the state with the maximum number of day0 cells
 GM_state <- function(cds){
   if (length(unique(pData(cds)$State)) > 1){
     T0_counts <- table(pData(cds)$State, pData(cds)$hour)[,"0"]
@@ -56,14 +54,6 @@ g1 <- plot_cell_trajectory(XX, color_by = "day",
   ggtitle(paste0("XX Pseudotime\nDDRTree: ", top_pdt_genes, " MVGs (FDR<0.01) across time")) +
   labs(color = "Time [days]")
 adjust_size(g = g1, panel_width_cm = 5, panel_height_cm = 5, savefile = paste0(outpath, "B_pdtXX_time.pdf"))
-
-g2 <- plot_cell_trajectory(XX, color_by = "Scaled_PDT", 
-                           cell_size = scattersize, cell_link_size = linesize, 
-                           show_branch_points = FALSE) + theme1 +
-  scale_color_gradient2(low = "black", mid = "black", high = "gold") + 
-  guides(color = guide_colourbar(barwidth = 4, barheight = 0.7)) +
-  ggtitle(paste0("XX Pseudotime\nDDRTree: ", top_pdt_genes, " MVGs (FDR<0.01) across time"))
-adjust_size(g = g2, panel_width_cm = 5, panel_height_cm = 5, savefile = paste0(outpath, "B_pdtXX_pdt.pdf"))
 
 
 print("3) C/D: UMAP embedding and RNA-velocity projections")
@@ -95,23 +85,22 @@ keep <- (rm_s >= 1)&(rm_u >= 0.5); table(keep)
 emat <- spliced_filt <- spliced$counts[keep,]; nmat <- unspliced_filt <- unspliced$counts[keep,]
 
 # compute velocities
-fit.quantile <- 0.025; kcells <- 20; mincor <- 0.05
+ncores <- min(c(detectCores(), 10))
+fit.quantile <- 0.025; kcells <- 20
 arrow.scale=5; cell.alpha=0.4; cell.cex=1; fig.height=4; fig.width=4.5;
-notAS_vel <- gene.relative.velocity.estimates(emat, nmat, deltaT=1, kCells = kcells, 
+notAS_vel <- gene.relative.velocity.estimates(emat, nmat, 
+                                              kCells = kcells, 
                                               fit.quantile = fit.quantile, 
-                                              min.nmat.emat.slope = mincor,
-                                              min.nmat.emat.correlation = mincor, 
-                                              n.cores = 10)
+                                              n.cores = ncores)
 save(notAS_vel, file = paste0(outpath, "notAS_vel.RData"))
 
 
 print("3.2) Compute notAS UMAP embedding")
 
 # settings
-pcount <- 1; mvg <- 500; umap_nPcs <- 50; umap_nn <- 20; neighbor_size <- 100; mult <- 1e3
-quantile <- 0.025; min.correlation <- min.slope <- 0.05; 
-grid_size <- 30; arrow.pca <- 2.5; arrow <- 2.5; arrow.lwd <- 1; grid.mass <- 5
-gapT <- 1; k_range <- 30; controlby <- "time"; cor_dist_measure <- "cor"; velocity_scale <- "sqrt"
+mvg <- 500; umap_nPcs <- 50; umap_nn <- 20
+arrow <- 2.5; arrow.lwd <- 1; arrowthick <- 3e-1; arrowidth <- 5*1e-2; arrowsharp <- 40
+velocity_scale <- "sqrt"
 
 # load data and define marker genes
 load(paste0(datapath, "DGE.RData"))
@@ -146,14 +135,13 @@ colors <- data.frame(sinfo, t(expr_markers))
 colors$AXCR <- abs(colors$Xchr_ratio - 0.5)
 
 plot_features <- c("Time", "AXCR", markergenes); plot_list <- list()
-x <- show.velocity.on.embedding.cor(emb, vel = notAS_vel, n=neighbor_size, scale=velocity_scale, 
+x <- show.velocity.on.embedding.cor(emb, vel = notAS_vel, scale=velocity_scale, 
                                     cex=1.5, arrow.scale=10, show.grid.flow=TRUE, 
-                                    min.grid.cell.mass=5, grid.n=20,
+                                    min.grid.cell.mass=5,
                                     arrow.lwd=arrow.lwd, do.par=F, cell.border.alpha = 0.5,
                                     return.details = TRUE)
 
 # make the arrow width proportional to the velocity extent
-arrowthick <- 3e-1; arrowidth <- 5*1e-2; arrowsharp <- 40
 temp <- data.frame(emb, colors, Xist_count = spliced$counts["Xist",]); gridvelo <- x$garrows
 x$garrows <- data.frame(x$garrows)
 x$garrows$dist <- sqrt((x$garrows$x0 - x$garrows$x1)^2 + (x$garrows$y0 - x$garrows$y1)^2)
@@ -185,7 +173,6 @@ g <- umap_markers %>%
   ggplot() + 
   facet_grid(.~variable) +
   theme_bw() + theme1 +
-  # scale_y_reverse() +
   geom_point(aes(x = X1, y = X2, color = value), size = outliersize, shape = 20) + 
   scale_colour_gradientn(colours = c("black", "gold")) + 
   labs(x="", y = "", color = expression(log[10]*"(CPM + 1) values")) + 
@@ -207,7 +194,6 @@ df_melt$variable <- revalue(df_melt$variable, replace = c("xist_umi" = "Xist UMI
 df_melt$day <- factor(df_melt$day)
 
 print("4.2) Plot")
-# barplot
 nXistUnd$day <- factor(nXistUnd$day, levels = rev(levels(factor(nXistUnd$day))))
 g <- nXistUnd %>%
   ggplot(aes(x = day, y = (1-n)*100)) + 
@@ -233,7 +219,7 @@ adjust_size(g = g, panel_width_cm = 1.5, panel_height_cm = 3, savefile = paste0(
 
 
 
-print("5) F: X/A ratio using bootstrapping autosomal features (n= #x-linked genes)")
+print("5) F: Bootstrap X/A ratio: sampling autosomal features, with n = #x-linked genes")
 
 print("5.1) Bootstrapped X/A ratio")
 load(paste0(datapath, "DGE.RData"))

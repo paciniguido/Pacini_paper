@@ -91,24 +91,48 @@ data <- data[(data$Experiment %in% "FISH")&(data$CellLine %in% "TX1072"),]
 data$Xist <- factor(revalue(factor(data$Variable), replace = c("XistPos" = "Xist+", "XistBi" = "BA")), 
                     levels = c("Xist+", "BA"))
 
-print("4.2) Plot")
+print("4.2) Define percentage of Xist-MA cells per replicate")
+temp <- data %>% 
+  dplyr::group_by(Day, Replicate) %>%
+  dplyr::summarise(perc = Value[Xist == "Xist+"] - Value[Xist == "BA"]) %>%
+  as.data.frame()
+data <- rbind(data,
+              data.frame(Experiment = "FISH", 
+                         CellLine = "TX1072",
+                         Day = temp$Day,
+                         Gene = NA,
+                         Variable = "XistMA",
+                         Replicate = temp$Replicate,
+                         Value = temp$perc,
+                         Value_Description = "Cells [%]",
+                         Xist = "Xist-MA"))
+  
+
+print("4.3) Stacked barplot")
+data <- data[!data$Xist %in% "Xist+",]
+data$Xist <- factor(data$Xist, levels = c("Xist-MA", "BA"))
 cols <- c("#6F72B5", "#fa9fb5")
-g <- data  %>%
-  ggplot(aes(x = factor(Day), y = Value, color = Xist, fill = Xist)) +
-  theme_bw() + theme1 +  
-  geom_jitter(position=position_jitterdodge(jitter.width = .1, dodge.width = 0.5),
-              size = small_scattersize, show.legend = FALSE, alpha = 1/2) +
-  stat_summary(fun=mean, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.5,
-               position=position_jitterdodge(jitter.width = 0, dodge.width = 0.5), size = linesize*2) +
-  scale_color_manual(values = cols) +
+data$day <- paste0("Day ", data$Day)
+data %>% dplyr::group_by(day, Xist) %>% dplyr::summarise(mean = round(mean(Value), digits = 2)) %>% as.data.frame()
+
+# define one bar per replicate for each time point
+data$x <- data$Day + (data$Replicate - 2)*0.25
+g <- data %>%
+  ggplot(aes(x = x, y = Value, fill = Xist)) +
+  theme_bw() + theme1 + 
+  geom_bar(stat="identity") +
+  scale_fill_manual(values = cols) +
+  scale_x_continuous(breaks = seq(1,4)) +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 100), breaks = seq(0, 100, 25)) +
   labs(x = "Time [days]", 
        y = "Cells [%]",
-       color = "") +
-  scale_y_continuous(breaks = seq(0, 100, 25), limits = c(0, 100))
-adjust_size(g = g, panel_width_cm = 2, panel_height_cm = 3, savefile = paste0(outpath, "C_FISH_percentage.pdf"))
+       fill = "Image\nClassification")
+adjust_size(g = g, panel_width_cm = 3, panel_height_cm = 3, 
+            savefile = paste0(outpath, "C_FISH_percentage.pdf"))
 
 
-print("5) D: Xist AS CPM over time")
+
+print("5) D: Xist AS CPM over time - Xist.MA cells")
 
 print("5.1) Load data")
 
